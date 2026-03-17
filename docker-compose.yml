@@ -1,0 +1,35 @@
+services:
+  backend:
+    build: ./backend
+    container_name: ai_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    depends_on:
+      - db
+    volumes:
+      - ./data:/app/data
+
+  frontend:
+    build: ./frontend
+    container_name: ai_frontend
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+
+  db:
+    image: postgres:15
+    container_name: ai_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ai_analyst
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+volumes:
+  db_data:
