@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ ./src
 COPY uploads/ ./uploads
+RUN mkdir -p data/chroma
 
 EXPOSE 8000
 
