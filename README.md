@@ -63,8 +63,8 @@ AI-Data-Analyst-System/
 ## Roadmap
 
 ### Phase 1 — Fix & Stabilize ← current
-- [ ] Test full flow: upload → index → chat
-- [ ] Verify RAG is retrieving context correctly
+- [X] Test full flow: upload → index → chat
+- [X] Verify RAG is retrieving context correctly
 - [ ] Fix any remaining bugs
 
 ### Phase 2 — Preprocessing Layer (`src/preprocessing/`)
