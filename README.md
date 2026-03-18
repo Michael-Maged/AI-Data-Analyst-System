@@ -4,6 +4,47 @@ You are building a full AI Data Analyst System, and at this stage you have alrea
 
 ---
 
+## Architecture
+
+```
+AI-Data-Analyst-System/
+├── backend/
+│   ├── src/
+│   │   ├── main.py              # FastAPI app + all endpoints
+│   │   ├── database.py          # SQLAlchemy engine + init_db()
+│   │   ├── ingestion/
+│   │   │   └── handler.py       # save_upload(), load_dataset(), _read_file()
+│   │   ├── eda/
+│   │   │   └── summary.py       # get_dataset_summary(df)
+│   │   ├── rag/
+│   │   │   └── vectorstore.py   # build_vectorstore(), ChromaDB + nomic-embed-text
+│   │   └── llm/
+│   │       └── analyst.py       # ConversationalRetrievalChain, self-healing code exec
+│   ├── requirements.txt
+│   └── Dockerfile
+├── frontend/
+│   └── app.py                   # Streamlit UI: upload, chat, data preview
+├── data/
+│   ├── chroma/                  # ChromaDB vector stores (gitignored)
+│   ├── processed/               # Cleaned datasets (gitignored)
+│   └── raw/                     # Raw data (gitignored)
+├── docker-compose.yml
+└── .gitignore
+```
+
+---
+
+## Key Design Decisions
+
+- **Ollama on host**: All LLM/embedding calls use `http://host.docker.internal:11434` since Ollama runs on the host, not in Docker
+- **Background indexing**: `build_vectorstore` runs as a FastAPI `BackgroundTask` so uploads return immediately; frontend polls `/index-status/{id}`
+- **Two-mode LLM**: Analyst responds with `mode: code` (executes pandas code) or `mode: analysis` (direct text answer) based on question type
+- **Self-healing**: On code execution failure, the error is fed back to the LLM for one retry
+- **Row chunking**: ChromaDB documents use 10-row chunks with 1500-char truncation to avoid context length errors
+- **ChromaDB telemetry**: Suppressed via `ANONYMIZED_TELEMETRY=False` env var
+
+---
+
 ## Current State
 
 - ✅ Dockerized FastAPI backend + PostgreSQL
