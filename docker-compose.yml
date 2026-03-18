@@ -11,6 +11,9 @@ services:
     volumes:
       - ./data:/app/data
       - ./backend/uploads:/app/uploads
+    environment:
+      - ANONYMIZED_TELEMETRY=False
+      - CHROMA_TELEMETRY=False
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
