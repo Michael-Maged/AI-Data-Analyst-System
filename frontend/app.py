@@ -3,6 +3,8 @@ import time
 import streamlit as st
 import requests
 import pandas as pd
+import base64
+from io import BytesIO
 
 API = os.getenv("API_URL", "http://host.docker.internal:8000")
 
@@ -115,6 +117,8 @@ with tab1:
             if msg.get("code"):
                 with st.expander("🔧 Generated code"):
                     st.code(msg["code"], language="python")
+            if msg.get("chart"):
+                st.image(BytesIO(base64.b64decode(msg["chart"])), caption=msg.get("chart_description", "Chart"))
 
     if question:
         st.session_state.messages.append({"role": "user", "content": question})
@@ -139,11 +143,27 @@ with tab1:
                     with st.expander("🔧 Generated code"):
                         st.code(code, language="python")
 
+                # Try to generate visualization
+                chart_data = None
+                if any(word in question.lower() for word in ["plot", "chart", "graph", "visualize", "show", "distribution", "correlation"]):
+                    try:
+                        viz_res = requests.post(
+                            f"{API}/visualize",
+                            params={"dataset_id": st.session_state.dataset_id, "question": question}
+                        )
+                        if viz_res.status_code == 200:
+                            chart_data = viz_res.json()
+                            st.image(BytesIO(base64.b64decode(chart_data["chart"])), caption=chart_data.get("description", "Chart"))
+                    except Exception:
+                        pass  # Silently fail if visualization doesn't work
+
                 st.session_state.messages.append({
                     "role": "assistant",
                     "content": answer,
                     "code": code,
-                    "mode": mode
+                    "mode": mode,
+                    "chart": chart_data["chart"] if chart_data else None,
+                    "chart_description": chart_data.get("description") if chart_data else None
                 })
             else:
                 st.error(f"Error: {res.status_code} — {res.text}")

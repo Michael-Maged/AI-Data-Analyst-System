@@ -30,9 +30,11 @@ def save_upload(file, background_tasks) -> dict:
         conn.commit()
         dataset_id = result[0]
 
-    # Build RAG vector store in background
+    # Preprocess and build RAG vector store in background
     from src.rag.vectorstore import build_vectorstore
-    background_tasks.add_task(build_vectorstore, dataset_id, df)
+    from src.preprocessing.cleaner import clean
+    cleaned_df = clean(df, dataset_id)
+    background_tasks.add_task(build_vectorstore, dataset_id, cleaned_df)
 
     return {
         "dataset_id": dataset_id,
@@ -55,5 +57,10 @@ def load_dataset(dataset_id: int) -> tuple[pd.DataFrame, str]:
     if not result:
         return None, None
 
+    # Try to load cleaned data first, fallback to raw
+    cleaned_path = f"data/processed/{dataset_id}.csv"
+    if os.path.exists(cleaned_path):
+        return pd.read_csv(cleaned_path), result[0]
+    
     file_path = f"{UPLOAD_DIR}/{result[0]}"
     return _read_file(file_path), result[0]

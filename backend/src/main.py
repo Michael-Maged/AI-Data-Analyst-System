@@ -4,6 +4,7 @@ from src.database import engine, init_db
 from src.ingestion.handler import save_upload, load_dataset
 from src.llm.analyst import chat, clear_history
 from src.rag.vectorstore import build_vectorstore, is_indexed
+from src.visualization.charts import auto_visualize
 
 app = FastAPI()
 
@@ -55,3 +56,26 @@ def chat_with_dataset(dataset_id: int, question: str):
 def reset_chat(dataset_id: int):
     clear_history(dataset_id)
     return {"message": "Conversation cleared"}
+
+
+@app.post("/visualize")
+def visualize_data(dataset_id: int, question: str):
+    try:
+        df, filename = load_dataset(dataset_id)
+        if df is None:
+            raise HTTPException(status_code=404, detail="Dataset not found")
+        
+        result = auto_visualize(df, question)
+        if result is None:
+            # Return a helpful message instead of error
+            return {
+                "type": "info", 
+                "chart": None, 
+                "description": "Could not generate a suitable visualization for this question. Try asking for 'correlation matrix', 'distribution of [column]', or 'scatter plot of [col1] vs [col2]'."
+            }
+        
+        return result
+        
+    except Exception as e:
+        print(f"Visualization error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error generating visualization: {str(e)}")

@@ -1,5 +1,5 @@
 import pandas as pd
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
 from src.eda.summary import get_dataset_summary
@@ -50,18 +50,35 @@ def _build_documents(df: pd.DataFrame, dataset_id: int) -> list[Document]:
         nulls = int(df[col].isnull().sum())
         unique = int(df[col].nunique())
 
-        if df[col].dtype == "object":
+        if df[col].dtype == "object" or 'datetime' in dtype.lower():
             top = df[col].value_counts().head(10).to_dict()
             content = (
-                f"Column '{col}' is categorical with {unique} unique values and {nulls} missing values.\n"
+                f"Column '{col}' is categorical/datetime with {unique} unique values and {nulls} missing values.\n"
                 f"Top values: {top}"
             )
         else:
             stats = df[col].describe().to_dict()
+            # Handle numeric stats safely
+            mean_val = stats.get('mean', 0)
+            std_val = stats.get('std', 0)
+            min_val = stats.get('min', 0)
+            max_val = stats.get('max', 0)
+            
+            # Convert to float if possible, otherwise use string representation
+            try:
+                mean_str = str(round(float(mean_val), 3)) if mean_val is not None else "N/A"
+                std_str = str(round(float(std_val), 3)) if std_val is not None else "N/A"
+                min_str = str(min_val) if min_val is not None else "N/A"
+                max_str = str(max_val) if max_val is not None else "N/A"
+            except (TypeError, ValueError):
+                mean_str = str(mean_val) if mean_val is not None else "N/A"
+                std_str = str(std_val) if std_val is not None else "N/A"
+                min_str = str(min_val) if min_val is not None else "N/A"
+                max_str = str(max_val) if max_val is not None else "N/A"
+            
             content = (
                 f"Column '{col}' is numeric ({dtype}) with {nulls} missing values.\n"
-                f"Stats: min={stats.get('min')}, max={stats.get('max')}, "
-                f"mean={round(stats.get('mean', 0), 3)}, std={round(stats.get('std', 0), 3)}"
+                f"Stats: min={min_str}, max={max_str}, mean={mean_str}, std={std_str}"
             )
         docs.append(Document(
             page_content=content,

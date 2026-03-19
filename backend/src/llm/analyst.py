@@ -1,9 +1,8 @@
 import json
 import pandas as pd
 from langchain_ollama import ChatOllama
-from langchain.memory import ConversationBufferWindowMemory
-from langchain.prompts import PromptTemplate
-from langchain.chains import ConversationalRetrievalChain
+from langchain_core.prompts import PromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage
 from src.rag.vectorstore import get_vectorstore, build_vectorstore
 
 OLLAMA_BASE = "http://host.docker.internal:11434"
@@ -17,18 +16,22 @@ SAFE_BUILTINS = {
     "int": int, "float": float, "bool": bool,
 }
 
-_memories: dict[int, ConversationBufferWindowMemory] = {}
+_memories: dict[int, list] = {}
 
 
-def _get_memory(dataset_id: int) -> ConversationBufferWindowMemory:
+def _get_memory(dataset_id: int) -> list:
     if dataset_id not in _memories:
-        _memories[dataset_id] = ConversationBufferWindowMemory(
-            k=10,
-            memory_key="chat_history",
-            return_messages=True,
-            output_key="answer"
-        )
+        _memories[dataset_id] = []
     return _memories[dataset_id]
+
+
+def _add_to_memory(dataset_id: int, human_msg: str, ai_msg: str):
+    memory = _get_memory(dataset_id)
+    memory.append(HumanMessage(content=human_msg))
+    memory.append(AIMessage(content=ai_msg))
+    # Keep only last 10 messages (5 exchanges)
+    if len(memory) > 10:
+        memory[:] = memory[-10:]
 
 
 def _try_execute(code: str, df: pd.DataFrame) -> tuple[bool, str]:
@@ -40,7 +43,7 @@ def _try_execute(code: str, df: pd.DataFrame) -> tuple[bool, str]:
         return False, str(e)
 
 
-def _build_chain(dataset_id: int, df: pd.DataFrame) -> ConversationalRetrievalChain:
+def _build_chain(dataset_id: int, df: pd.DataFrame):
     llm = ChatOllama(model=MODEL, base_url=OLLAMA_BASE, temperature=0.2)
     memory = _get_memory(dataset_id)
 
@@ -51,7 +54,15 @@ def _build_chain(dataset_id: int, df: pd.DataFrame) -> ConversationalRetrievalCh
 
     retriever = vectorstore.as_retriever(search_kwargs={"k": 6})
 
-    combine_prompt = PromptTemplate.from_template("""You are an expert AI data analyst. Use the retrieved dataset context and conversation history to answer the user's question thoroughly.
+    # Format chat history for prompt
+    chat_history_str = ""
+    for i in range(0, len(memory), 2):
+        if i + 1 < len(memory):
+            human_msg = memory[i].content
+            ai_msg = memory[i + 1].content
+            chat_history_str += f"Human: {human_msg}\nAI: {ai_msg}\n\n"
+
+    prompt_template = """You are an expert AI data analyst. Use the retrieved dataset context and conversation history to answer the user's question thoroughly.
 
 Retrieved context from the dataset:
 {context}
@@ -69,17 +80,33 @@ Instructions:
 - If asked to explain the dataset, cover: purpose, columns, data types, statistics, notable patterns, data quality
 - Always respond with ONLY the JSON object
 
-Answer:""")
+Answer:"""
 
-    chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=memory,
-        combine_docs_chain_kwargs={"prompt": combine_prompt},
-        return_source_documents=False,
-        verbose=False
-    )
-    return chain
+    # Create a simple chain without memory dependency
+    def invoke_chain(inputs):
+        try:
+            context_docs = retriever.invoke(inputs["question"])
+        except AttributeError:
+            # Fallback for older versions
+            context_docs = retriever.get_relevant_documents(inputs["question"])
+        
+        context = "\n".join([doc.page_content for doc in context_docs])
+        
+        prompt_text = prompt_template.format(
+            context=context,
+            chat_history=chat_history_str,
+            question=inputs["question"]
+        )
+        
+        response = llm.invoke(prompt_text)
+        return {"answer": response.content}
+    
+    # Return a mock chain object
+    class MockChain:
+        def invoke(self, inputs):
+            return invoke_chain(inputs)
+    
+    return MockChain()
 
 
 def chat(dataset_id: int, question: str, df: pd.DataFrame) -> dict:
@@ -96,7 +123,7 @@ def chat(dataset_id: int, question: str, df: pd.DataFrame) -> dict:
     try:
         parsed = json.loads(response_text)
     except json.JSONDecodeError:
-        return {"answer": response_text, "mode": "analysis"}
+        parsed = {"mode": "analysis", "answer": response_text}
 
     if parsed.get("mode") == "code":
         code = parsed.get("code", "")
@@ -114,9 +141,12 @@ def chat(dataset_id: int, question: str, df: pd.DataFrame) -> dict:
             code = fixed_code
 
         answer = result if success else f"Could not compute: {result}"
+        _add_to_memory(dataset_id, question, answer)
         return {"answer": answer, "code": code, "mode": "code"}
 
-    return {"answer": parsed.get("answer", response_text), "mode": "analysis"}
+    answer = parsed.get("answer", response_text)
+    _add_to_memory(dataset_id, question, answer)
+    return {"answer": answer, "mode": "analysis"}
 
 
 def clear_history(dataset_id: int):
