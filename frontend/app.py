@@ -96,12 +96,67 @@ if not st.session_state.dataset_id:
 question = st.chat_input("Ask anything about your data...")
 
 # ── Tabs ──────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["💬 Chat", "🔍 Data Preview"])
+tab1, tab2, tab3 = st.tabs(["💬 Chat", "🔍 Data Preview", "📊 Comprehensive Analysis"])
 
 with tab2:
     if st.session_state.preview:
         st.subheader("Dataset Preview")
         st.dataframe(pd.DataFrame(st.session_state.preview), use_container_width=True)
+
+with tab3:
+    if st.session_state.dataset_id and st.session_state.indexed:
+        st.subheader(f"Comprehensive Analysis of **{st.session_state.filename}**")
+        
+        if st.button("📊 Generate Comprehensive Analysis", type="primary"):
+            with st.spinner("Generating comprehensive analysis..."):
+                try:
+                    res = requests.get(f"{API}/comprehensive-analysis/{st.session_state.dataset_id}")
+                    if res.status_code == 200:
+                        analysis = res.json()
+                        
+                        # Display summary statistics
+                        st.subheader("📊 Statistical Summary")
+                        summary = analysis["summary"]
+                        
+                        # Basic info
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Rows", f"{summary['basic_info']['rows']:,}")
+                        with col2:
+                            st.metric("Columns", summary['basic_info']['columns'])
+                        with col3:
+                            st.metric("Missing %", f"{summary['basic_info']['missing_percentage']}%")
+                        with col4:
+                            st.metric("Quality Score", f"{summary['data_quality']['quality_score']}%")
+                        
+                        # Insights
+                        if summary.get('insights'):
+                            st.subheader("💡 Key Insights")
+                            for insight in summary['insights']:
+                                st.info(insight)
+                        
+                        # Recommendations
+                        if summary.get('recommendations'):
+                            st.subheader("🎯 Recommendations")
+                            for rec in summary['recommendations']:
+                                st.warning(rec)
+                        
+                        # Visualizations
+                        st.subheader("📈 Comprehensive Visualizations")
+                        charts = analysis["visualizations"]
+                        
+                        for chart_name, chart_data in charts.items():
+                            if chart_data:
+                                st.subheader(chart_name.replace('_', ' ').title())
+                                st.image(BytesIO(base64.b64decode(chart_data)), use_column_width=True)
+                        
+                        st.success("Comprehensive analysis completed!")
+                    else:
+                        st.error(f"Error: {res.status_code} — {res.text}")
+                except Exception as e:
+                    st.error(f"Error generating analysis: {str(e)}")
+    else:
+        st.info("ℹ️ Upload and index a dataset first to see comprehensive analysis.")
 
 with tab1:
     st.subheader(f"Chat with **{st.session_state.filename}**")
