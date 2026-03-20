@@ -15,7 +15,15 @@ def init_db():
             CREATE TABLE IF NOT EXISTS datasets (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
+                rows_count INTEGER,
+                columns_count INTEGER,
                 created_at TIMESTAMP DEFAULT NOW()
             )
         """))
+        # Add columns if they don't exist (for existing DBs)
+        for col, coltype in [("rows_count", "INTEGER"), ("columns_count", "INTEGER")]:
+            try:
+                conn.execute(text(f"ALTER TABLE datasets ADD COLUMN IF NOT EXISTS {col} {coltype}"))
+            except Exception:
+                pass
         conn.commit()

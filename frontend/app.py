@@ -26,16 +26,30 @@ if "preview" not in st.session_state:
 if "indexed" not in st.session_state:
     st.session_state.indexed = False
 
+
+def _select_dataset(dataset_id: int):
+    """Load a previously uploaded dataset into session state."""
+    res = requests.get(f"{API}/datasets/{dataset_id}/preview")
+    if res.status_code == 200:
+        data = res.json()
+        st.session_state.dataset_id = data["dataset_id"]
+        st.session_state.filename = data["filename"]
+        st.session_state.preview = data["preview"]
+        st.session_state.messages = []
+        st.session_state.indexed = False
+
 # ── Sidebar ────────────────────────────────────────────────────
 with st.sidebar:
     st.title("📊 AI Data Analyst")
     st.divider()
 
-    uploaded = st.file_uploader("Upload CSV or Excel", type=["csv", "xlsx", "xls"])
+    # ── Upload new file ──────────────────────────────────────
+    st.subheader("⬆️ Upload New File")
+    uploaded = st.file_uploader("CSV or Excel", type=["csv", "xlsx", "xls"])
 
     if uploaded:
         if uploaded.name != st.session_state.filename:
-            with st.spinner("Uploading and indexing..."):
+            with st.spinner("Uploading..."):
                 res = requests.post(
                     f"{API}/upload",
                     files={"file": (uploaded.name, uploaded.getvalue())}
@@ -48,16 +62,41 @@ with st.sidebar:
                 st.session_state.messages = []
                 st.session_state.indexed = False
                 st.success(f"✅ Uploaded: {data['filename']}")
-                st.caption(f"{data['rows_count']} rows × {data['columns_count']} columns")
-                st.info(data.get("message", ""))
+                st.rerun()
             else:
                 st.error("Upload failed")
 
+    st.divider()
+
+    # ── Previous uploads ─────────────────────────────────────
+    st.subheader("🗂️ Previous Uploads")
+    try:
+        prev_res = requests.get(f"{API}/datasets", timeout=3)
+        if prev_res.status_code == 200:
+            datasets = prev_res.json()
+            if datasets:
+                for ds in datasets:
+                    is_active = ds["id"] == st.session_state.dataset_id
+                    with st.container():
+                        c1, c2 = st.columns([3, 1])
+                        with c1:
+                            name = f"🟢 {ds['filename']}" if is_active else ds["filename"]
+                            st.caption(f"**{name}**\n{ds['rows_count'] or '?'} rows · {ds['created_at'][:10]}")
+                        with c2:
+                            if not is_active:
+                                if st.button("Load", key=f"load_{ds['id']}"):
+                                    _select_dataset(ds["id"])
+                                    st.rerun()
+            else:
+                st.caption("No previous uploads yet.")
+    except Exception:
+        st.caption("Could not load previous uploads.")
+
+    # ── Active dataset controls ───────────────────────────────
     if st.session_state.dataset_id:
         st.divider()
-        st.caption(f"**Active dataset:** {st.session_state.filename}")
+        st.caption(f"**Active:** {st.session_state.filename}")
 
-        # Auto-poll index status
         if not st.session_state.indexed:
             try:
                 res = requests.get(f"{API}/index-status/{st.session_state.dataset_id}", timeout=2)

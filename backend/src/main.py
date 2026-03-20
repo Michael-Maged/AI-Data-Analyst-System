@@ -48,6 +48,31 @@ def test_db():
         return {"status": "connected", "result": [row[0] for row in result]}
 
 
+@app.get("/datasets")
+def list_datasets():
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT id, name, rows_count, columns_count, created_at FROM datasets ORDER BY created_at DESC"
+        )).fetchall()
+    return [{"id": r[0], "filename": r[1], "rows_count": r[2], "columns_count": r[3],
+             "created_at": str(r[4])} for r in rows]
+
+
+@app.get("/datasets/{dataset_id}/preview")
+def get_dataset_preview(dataset_id: int):
+    df, filename = load_dataset(dataset_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return {
+        "dataset_id": dataset_id,
+        "filename": filename,
+        "rows_count": df.shape[0],
+        "columns_count": df.shape[1],
+        "columns": list(df.columns),
+        "preview": df.head().to_dict(orient="records"),
+    }
+
+
 @app.post("/upload")
 def upload_file(file: UploadFile, background_tasks: BackgroundTasks):
     return save_upload(file, background_tasks)

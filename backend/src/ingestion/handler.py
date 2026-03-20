@@ -24,8 +24,8 @@ def save_upload(file, background_tasks) -> dict:
 
     with engine.connect() as conn:
         result = conn.execute(
-            text("INSERT INTO datasets (name) VALUES (:name) RETURNING id"),
-            {"name": file.filename}
+            text("INSERT INTO datasets (name, rows_count, columns_count) VALUES (:name, :rows, :cols) RETURNING id"),
+            {"name": file.filename, "rows": df.shape[0], "cols": df.shape[1]}
         ).fetchone()
         conn.commit()
         dataset_id = result[0]
