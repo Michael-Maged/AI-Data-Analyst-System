@@ -96,7 +96,7 @@ if not st.session_state.dataset_id:
 question = st.chat_input("Ask anything about your data...")
 
 # ── Tabs ──────────────────────────────────────────────────────
-tab1, tab2, tab3 = st.tabs(["💬 Chat", "🔍 Data Preview", "📊 Comprehensive Analysis"])
+tab1, tab2, tab3 = st.tabs(["💬 Chat", "🔍 Data Preview", "📊 Analysis"])
 
 with tab2:
     if st.session_state.preview:
@@ -104,59 +104,53 @@ with tab2:
         st.dataframe(pd.DataFrame(st.session_state.preview), use_container_width=True)
 
 with tab3:
-    if st.session_state.dataset_id and st.session_state.indexed:
-        st.subheader(f"Comprehensive Analysis of **{st.session_state.filename}**")
-        
-        if st.button("📊 Generate Comprehensive Analysis", type="primary"):
-            with st.spinner("Generating comprehensive analysis..."):
-                try:
-                    res = requests.get(f"{API}/comprehensive-analysis/{st.session_state.dataset_id}")
-                    if res.status_code == 200:
-                        analysis = res.json()
-                        
-                        # Display summary statistics
-                        st.subheader("📊 Statistical Summary")
-                        summary = analysis["summary"]
-                        
-                        # Basic info
-                        col1, col2, col3, col4 = st.columns(4)
-                        with col1:
-                            st.metric("Rows", f"{summary['basic_info']['rows']:,}")
-                        with col2:
-                            st.metric("Columns", summary['basic_info']['columns'])
-                        with col3:
-                            st.metric("Missing %", f"{summary['basic_info']['missing_percentage']}%")
-                        with col4:
-                            st.metric("Quality Score", f"{summary['data_quality']['quality_score']}%")
-                        
-                        # Insights
-                        if summary.get('insights'):
-                            st.subheader("💡 Key Insights")
-                            for insight in summary['insights']:
-                                st.info(insight)
-                        
-                        # Recommendations
-                        if summary.get('recommendations'):
-                            st.subheader("🎯 Recommendations")
-                            for rec in summary['recommendations']:
-                                st.warning(rec)
-                        
-                        # Visualizations
-                        st.subheader("📈 Comprehensive Visualizations")
-                        charts = analysis["visualizations"]
-                        
-                        for chart_name, chart_data in charts.items():
-                            if chart_data:
-                                st.subheader(chart_name.replace('_', ' ').title())
-                                st.image(BytesIO(base64.b64decode(chart_data)), use_column_width=True)
-                        
-                        st.success("Comprehensive analysis completed!")
-                    else:
-                        st.error(f"Error: {res.status_code} — {res.text}")
-                except Exception as e:
-                    st.error(f"Error generating analysis: {str(e)}")
+    if not st.session_state.dataset_id:
+        st.info("Upload a dataset first.")
     else:
-        st.info("ℹ️ Upload and index a dataset first to see comprehensive analysis.")
+        if st.button("🔍 Run Analysis", type="primary"):
+            with st.spinner("Analyzing..."):
+                res = requests.get(f"{API}/analysis/{st.session_state.dataset_id}")
+            if res.status_code != 200:
+                st.error(f"Error: {res.text}")
+            else:
+                data = res.json()
+                analysis = data["analysis"]
+                plots = data["plots"]
+
+                # ── Shape ──────────────────────────────────────────
+                c1, c2 = st.columns(2)
+                c1.metric("Rows", f"{analysis['shape']['rows']:,}")
+                c2.metric("Columns", analysis['shape']['cols'])
+
+                # ── Missing data ───────────────────────────────────
+                if analysis["missing"]:
+                    st.subheader("Missing Data")
+                    st.dataframe(pd.DataFrame(analysis["missing"]).T, use_container_width=True)
+
+                # ── Strong correlations ────────────────────────────
+                strong = analysis["correlations"].get("strong_pairs", [])
+                if strong:
+                    st.subheader("Strong Column Relationships")
+                    st.dataframe(pd.DataFrame(strong), use_container_width=True)
+
+                # ── Outliers ───────────────────────────────────────
+                if analysis["outliers"]:
+                    st.subheader("Outliers Detected")
+                    st.dataframe(pd.DataFrame(analysis["outliers"]).T, use_container_width=True)
+
+                # ── Cat → Num relationships ────────────────────────
+                if analysis["cat_num_relationships"]:
+                    st.subheader("Categorical → Numeric Relationships (ANOVA p < 0.05)")
+                    st.dataframe(pd.DataFrame(analysis["cat_num_relationships"]), use_container_width=True)
+
+                # ── Plots ──────────────────────────────────────────
+                if plots:
+                    st.subheader("Key Plots")
+                    cols = st.columns(2)
+                    for i, (name, img) in enumerate(plots.items()):
+                        with cols[i % 2]:
+                            st.caption(name.replace("_", " ").title())
+                            st.image(BytesIO(base64.b64decode(img)), use_container_width=True)
 
 with tab1:
     st.subheader(f"Chat with **{st.session_state.filename}**")
@@ -181,22 +175,39 @@ with tab1:
             st.markdown(question)
 
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                res = requests.post(
-                    f"{API}/chat",
-                    params={"dataset_id": st.session_state.dataset_id, "question": question}
-                )
+            answer_placeholder = st.empty()
+            code_placeholder = st.empty()
 
-            if res.status_code == 200:
-                data = res.json()
-                answer = data.get("answer", "No response")
-                code = data.get("code")
-                mode = data.get("mode")
+            full_text = ""
+            code, mode, answer = None, "analysis", ""
+            with requests.post(
+                f"{API}/chat/stream",
+                params={"dataset_id": st.session_state.dataset_id, "question": question},
+                stream=True,
+                timeout=120
+            ) as stream_res:
+                if stream_res.status_code == 200:
+                    for chunk in stream_res.iter_content(chunk_size=None, decode_unicode=True):
+                        if chunk.startswith("__CODE_RESULT__"):
+                            import json as _json
+                            code_data = _json.loads(chunk[len("__CODE_RESULT__"):])
+                            answer = code_data["answer"]
+                            code = code_data.get("code")
+                            mode = "code"
+                            answer_placeholder.markdown(answer)
+                            if code:
+                                with code_placeholder.expander("🔧 Generated code"):
+                                    st.code(code, language="python")
+                        else:
+                            full_text += chunk
+                            answer_placeholder.markdown(full_text + "▌")
 
-                st.markdown(answer)
-                if code:
-                    with st.expander("🔧 Generated code"):
-                        st.code(code, language="python")
+                    if mode == "analysis":
+                        answer = full_text
+                        answer_placeholder.markdown(answer)
+                else:
+                    st.error(f"Error: {stream_res.status_code} — {stream_res.text}")
+                    answer, code, mode = "Error", None, "analysis"
 
                 # Try to generate visualization
                 chart_data = None
@@ -208,9 +219,10 @@ with tab1:
                         )
                         if viz_res.status_code == 200:
                             chart_data = viz_res.json()
-                            st.image(BytesIO(base64.b64decode(chart_data["chart"])), caption=chart_data.get("description", "Chart"))
+                            if chart_data.get("chart"):
+                                st.image(BytesIO(base64.b64decode(chart_data["chart"])), caption=chart_data.get("description", "Chart"))
                     except Exception:
-                        pass  # Silently fail if visualization doesn't work
+                        pass
 
                 st.session_state.messages.append({
                     "role": "assistant",
@@ -220,5 +232,3 @@ with tab1:
                     "chart": chart_data["chart"] if chart_data else None,
                     "chart_description": chart_data.get("description") if chart_data else None
                 })
-            else:
-                st.error(f"Error: {res.status_code} — {res.text}")

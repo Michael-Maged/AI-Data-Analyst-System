@@ -1,13 +1,34 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import text
+import math
+import json
 from src.database import engine, init_db
 from src.ingestion.handler import save_upload, load_dataset
-from src.llm.analyst import chat, clear_history
+from src.llm.analyst import chat, chat_stream, clear_history
 from src.rag.vectorstore import build_vectorstore, is_indexed
-from src.visualization.advanced_charts import AdvancedVisualizer, auto_visualize
-from src.eda.advanced_summary import get_comprehensive_summary
+from src.eda.analysis import analyze
+from src.visualization.plots import generate_plots
+from src.visualization.charts import AdvancedVisualizer, auto_visualize
+from src.eda.summary import get_comprehensive_summary
 
 app = FastAPI()
+
+
+def _sanitize(obj):
+    """Recursively replace NaN/inf with None so JSON serialization never fails."""
+    if isinstance(obj, float):
+        return None if (math.isnan(obj) or math.isinf(obj)) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    return obj
+
+
+def _json(data: dict) -> JSONResponse:
+    return JSONResponse(content=json.loads(json.dumps(_sanitize(data), default=str)))
 
 
 @app.on_event("startup")
@@ -59,6 +80,27 @@ def reset_chat(dataset_id: int):
     return {"message": "Conversation cleared"}
 
 
+@app.post("/chat/stream")
+def chat_stream_endpoint(dataset_id: int, question: str):
+    df, _ = load_dataset(dataset_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    return StreamingResponse(
+        chat_stream(dataset_id, question, df),
+        media_type="text/plain"
+    )
+
+
+@app.get("/analysis/{dataset_id}")
+def get_analysis(dataset_id: int):
+    df, filename = load_dataset(dataset_id)
+    if df is None:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+    analysis = analyze(df)
+    plots = generate_plots(df, analysis)
+    return _json({"analysis": analysis, "plots": plots})
+
+
 @app.post("/visualize")
 def visualize_data(dataset_id: int, question: str):
     try:
@@ -97,12 +139,12 @@ def get_comprehensive_analysis(dataset_id: int):
         visualizer = AdvancedVisualizer(df)
         charts = visualizer.create_comprehensive_dashboard()
         
-        return {
+        return _json({
             "filename": filename,
             "summary": summary,
             "visualizations": charts,
             "message": "Comprehensive analysis completed successfully"
-        }
+        })
         
     except Exception as e:
         print(f"Comprehensive analysis error: {e}")

@@ -21,7 +21,7 @@ def _build_documents(df: pd.DataFrame, dataset_id: int) -> list[Document]:
 
     # 1. Overall dataset summary document
     schema_text = "\n".join(
-        f"- {col}: {info['dtype']}, {info['unique']} unique values, {info['nulls']} nulls"
+        f"- {col}: {info['dtype']}, {info.get('unique_count', info.get('unique', '?'))} unique values, {info.get('missing_count', info.get('nulls', '?'))} nulls"
         for col, info in summary["columns"].items()
     )
     docs.append(Document(
